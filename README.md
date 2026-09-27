@@ -7,7 +7,8 @@ standalone app).
 ## Status
 
 v0.1 is implemented and verified end-to-end: loaded through Orca's plugin
-system (status "Running") and rendering in real Discord.
+system (status "Running") and rendering in real Discord. See
+[ROADMAP.md](ROADMAP.md) for what is not done yet.
 
 ## What it shows
 
