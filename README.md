@@ -7,8 +7,8 @@ standalone app).
 ## Status
 
 v0.1 is implemented and verified end-to-end: loaded through Orca's plugin
-system (status "Running") and rendering in real Discord. See
-[ROADMAP.md](ROADMAP.md) for what is not done yet.
+system (status "Running") and rendering in real Discord. What is not done yet
+is summarised in [Roadmap](#roadmap) and detailed in [ROADMAP.md](ROADMAP.md).
 
 ## What it shows
 
@@ -32,7 +32,8 @@ for Rich Presence.
 2. In the same app, set **General Information → App Icon** (1024×1024). Discord
    uses the App Icon as the Rich Presence large image by default, so this is
    what replaces the placeholder icon in the "Playing" card.
-3. Copy `config.json.example` to `config.json` and set `clientId` to that ID.
+3. Copy `config.json.example` to `config.json` and set `clientId` to that ID
+   (see [Config](#config)).
 4. Build: `pnpm install && pnpm build` (outputs `dist/main.mjs`).
 5. Load in Orca: **Settings → Plugins → Development → Add path** → this
    directory → review and grant the requested capabilities
@@ -41,6 +42,17 @@ for Rich Presence.
 
 > The worker activates lazily on a subscribed event or the command. There is no
 > true automatic startup; `Start Presence` is the entry point.
+
+## Config
+
+`config.json` at the plugin root:
+
+```json
+{ "clientId": "123456789012345678" }
+```
+
+`config.json` is git-ignored. Missing or invalid `clientId` makes
+`Start Presence` return an error rather than connect.
 
 ## Development
 
@@ -72,16 +84,26 @@ Structure:
 - Orca: loaded through Settings → Plugins → Development; the plugin shows
   status "Running" and its presence renders in Discord.
 
-The only remaining manual step is uploading the Discord **App Icon** in the
-Developer Portal (the code and manifest already reference the local icon).
+## Roadmap
 
-## Config
+v0.1 works end-to-end. The gaps below are grounded in the Orca plugin API and
+Discord behavior; full detail and rationale are in [ROADMAP.md](ROADMAP.md).
 
-`config.json` at the plugin root:
+**Next**
 
-```json
-{ "clientId": "123456789012345678" }
-```
+- Commit the built `dist/main.mjs` so others can install over git — Orca's
+  installer never runs a build.
+- In-Orca client ID configuration (today it is a hand-edited `config.json`).
+- Upload the App Icon in the Discord Developer Portal (removes the placeholder).
 
-`config.json` is git-ignored. Missing or invalid `clientId` makes
-`Start Presence` return an error rather than connect.
+**Later**
+
+- Shared public client ID so users need no Discord setup of their own
+  (Discord limits unapproved apps to ~50 testers until approved).
+- Verify macOS/Linux (Unix socket discovery is implemented, Windows-only tested).
+- Rich Presence art assets and buttons; marketplace publishing.
+
+**Blocked**
+
+- Automatic presence start — Orca has no app-startup hook, so `Start Presence`
+  remains the entry point.

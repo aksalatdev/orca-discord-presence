@@ -4,8 +4,8 @@ What v0.1 does today: loaded through Orca's plugin system and rendering in real
 Discord (see [README](README.md)). This file tracks what is **not** done yet and
 why, grounded in the Orca plugin API and Discord Rich Presence behavior.
 
-Status legend: **Done** · **Next** (ready to build) · **Later** (needs a
-decision or dependency) · **Blocked** (no supported path yet).
+Status legend: **Next** (ready to build) · **Later** (needs a decision or
+dependency) · **Blocked** (no supported path yet).
 
 ## Distribution
 
@@ -26,7 +26,7 @@ decision or dependency) · **Blocked** (no supported path yet).
 
 | Status | Item | Notes |
 | --- | --- | --- |
-| Next (manual) | Upload the App Icon in the Developer Portal | Discord shows the App Icon as the large image by default; while unset the "Playing" card shows a placeholder. Cannot be automated from the plugin. |
+| Next | Upload the App Icon in the Developer Portal (manual) | Discord shows the App Icon as the large image by default; while unset the "Playing" card shows a placeholder. Cannot be automated from the plugin. |
 | Later | Rich Presence art assets and buttons | `assets.large_image` / `assets.small_image` / `buttons` in the `SET_ACTIVITY` payload. Requires per-app asset uploads; explicitly out of scope for v0.1. |
 
 ## Platform
