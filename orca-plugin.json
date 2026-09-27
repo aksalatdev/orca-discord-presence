@@ -1,0 +1,24 @@
+{
+  "manifestVersion": 1,
+  "id": "discord-presence",
+  "publisher": "orca-samples",
+  "name": "Discord Presence",
+  "version": "0.1.0",
+  "description": "Show Orca ADE activity as Discord Rich Presence over local IPC.",
+  "icon": "icon.png",
+  "engines": { "orca": ">=1.4.0" },
+  "pluginApi": 1,
+  "main": "dist/main.mjs",
+  "contributes": {
+    "commands": [{ "id": "start-presence", "title": "Start Presence" }],
+    "events": [
+      { "on": "worktree.created" },
+      { "on": "worktree.removed" },
+      { "on": "agent.status.changed" }
+    ]
+  },
+  "capabilities": [
+    { "kind": "workspace:read" },
+    { "kind": "events:subscribe" }
+  ]
+}
