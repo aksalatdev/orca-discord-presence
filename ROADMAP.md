@@ -1,50 +1,31 @@
 # Roadmap
 
-What v0.1 does today: loaded through Orca's plugin system and rendering in real
-Discord (see [README](README.md)). This file tracks what is **not** done yet and
-why, grounded in the Orca plugin API and Discord Rich Presence behavior.
+The v0.2 source tree includes the built worker for Git installation, a
+per-user Discord Application ID path that survives plugin updates, and MIT
+licensing. The historical v0.1 dependency decisions remain in [tasks/plan.md](tasks/plan.md).
 
-Status legend: **Next** (ready to build) · **Later** (needs a decision or
-dependency) · **Blocked** (no supported path yet).
+Status legend: **Release gate** must pass before broad release; **Later** is
+outside the first public release; **Blocked** needs a supported host path.
 
-## Distribution
+## Release gates
 
-| Status | Item | Notes |
-| --- | --- | --- |
-| Next | Commit the built `dist/main.mjs` | Orca's installer **never runs a build** (`plugin-install.ts`: "No script execution during install, ever"), so a git install fails artifact validation while `dist/` is git-ignored. Either commit `dist/` or document local-path install as the only path. |
-| Next | Document install methods per audience | Git URL install (`https://github.com/aksalatdev/orca-discord-presence.git#main` — the `#ref` is required) vs local-path (clone + `pnpm build`). |
-| Later | Publish to a marketplace | Requires publishing to a marketplace source (e.g. `stablyai/orca-plugins`) and Discord app approval. Out of scope for v0.1. |
+| Item | Acceptance |
+| --- | --- |
+| Git installation | Publish a `v0.2.0` tag containing `dist/main.mjs`; install that tag in Orca from a fresh clone without Node or pnpm on the user's machine. |
+| Windows end-to-end | Verify the tagged Git install, per-user config, Start Presence, Discord display, reconnect, and cleanup with real Orca and Discord. |
+| macOS and Linux | Verify each claimed platform with real Orca and Discord; the current controlled-peer tests do not establish native desktop behavior. |
+| Release hygiene | Check the final tag for accidental config, credentials, generated dependencies, and mismatched manifest/bundle versions. |
 
-## Configuration
+## Later
 
-| Status | Item | Notes |
-| --- | --- | --- |
-| Next | In-Orca client ID configuration | Today the user must hand-edit `config.json`. A sandboxed panel may only call `workspace.readContext`, `terminal.sendText`, `notifications.show`, so a settings UI needs a worker roundtrip (panel → command) or a `settings:own` store. |
-| Later | Ship a shared public client ID | One Discord application ID baked in (or in the manifest example) so users need no setup. Trade-off: Discord restricts unapproved applications to ~50 testers. |
+| Item | Reason |
+| --- | --- |
+| In-Orca ID entry | The public panel bridge cannot call `settings.set`; the first release uses a documented user config file. |
+| Shared Discord Application ID | Users chose their own IDs for the first release. A shared ID needs separate Discord access and distribution validation. |
+| Marketplace listing | A separate publishing and review flow, not part of the Git release. |
+| Art assets and buttons | Require per-application Discord asset setup or a shared application. |
+| Faster branch updates | No public focus or branch-change event is available; the current refresh interval is 60 seconds. |
+| Automatic startup | Orca activates workers lazily from commands or subscribed events; no supported startup hook is available. |
 
-## Discord presence
-
-| Status | Item | Notes |
-| --- | --- | --- |
-| Next | Upload the App Icon in the Developer Portal (manual) | Discord shows the App Icon as the large image by default; while unset the "Playing" card shows a placeholder. Cannot be automated from the plugin. |
-| Later | Rich Presence art assets and buttons | `assets.large_image` / `assets.small_image` / `buttons` in the `SET_ACTIVITY` payload. Requires per-app asset uploads; explicitly out of scope for v0.1. |
-
-## Platform
-
-| Status | Item | Notes |
-| --- | --- | --- |
-| Later | Verify macOS and Linux | Unix socket discovery (`$XDG_RUNTIME_DIR` / `$TMPDIR` / `$TMP` / `$TEMP` / `/tmp`) is implemented but only Windows named pipes have been exercised. |
-| Later | Real-Discord integration test | The controlled-peer tests run in CI-safe isolation; a real Discord smoke needs a desktop Discord client and a live application ID, so it stays a manual check. |
-
-## Lifecycle
-
-| Status | Item | Notes |
-| --- | --- | --- |
-| Blocked | Automatic presence start | Orca activates a worker only on a registered command or a manifest-subscribed event; there is no host hook that runs at app startup. `Start Presence` remains the entry point. |
-| Next | Live branch/worktree updates | The active-context check is a 60-second refresh (no focus- or branch-change event exists in the plugin API), so the display can lag up to the refresh interval. |
-
-## Explicitly out of scope for v0.1
-
-Automatic startup hooks, private-state inspection, repository scanning,
-file/editor details, prompts or terminal content in presence, aggregate agent
-dashboards, OAuth, join/spectate, telemetry, and publishing/releasing.
+The plugin continues to exclude file contents, prompts, terminal text, OAuth,
+telemetry, and repository scanning.

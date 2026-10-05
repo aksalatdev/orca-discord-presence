@@ -1,9 +1,9 @@
 {
   "manifestVersion": 1,
   "id": "discord-presence",
-  "publisher": "orca-samples",
+  "publisher": "aksalatdev",
   "name": "Discord Presence",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Show Orca ADE activity as Discord Rich Presence over local IPC.",
   "icon": "icon.png",
   "engines": { "orca": ">=1.4.0" },

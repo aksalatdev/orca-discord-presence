@@ -1,5 +1,25 @@
 # orca-discord-presence v0.1
 
+## v0.2 public distribution extension
+
+The v0.1 runtime contract and dependency rationale below remain in force. v0.2
+adds a Git-installable release without a shared Discord application ID:
+
+- Ship the self-contained `dist/main.mjs` in Git because Orca's installer never
+  runs a build. Use the immutable `v0.2.0` Git tag for the first public install.
+- Each user supplies their own Discord Application ID in
+  `~/.orca-discord-presence/config.json`. Keep the root `config.json` as a local
+  development override. Both files use the same validated `{ "clientId": "..." }`
+  shape; neither is committed with a real ID.
+- Keep explicit Start Presence consent. The setup guide must explain that
+  workspace display name and branch can appear in Discord activity.
+- Preserve the existing two Orca capabilities and zero runtime dependencies.
+  Bound IPC frame memory, clean up timed-out connection attempts, surface safe
+  Discord error diagnostics, and keep failed context refreshes nonfatal.
+- A release claim for a platform requires a native Orca-to-Discord check on
+  that platform. The v0.2 implementation does not by itself establish macOS or
+  Linux compatibility.
+
 ## Objective and approved scope
 
 An Orca ADE plugin providing Discord Desktop Rich Presence through local IPC. It is not an OMP plugin or a standalone Discord application.

@@ -1,109 +1,84 @@
-# orca-discord-presence
+# Orca Discord Presence
 
-A Discord Rich Presence plugin for Orca ADE. Shows what you are currently doing
-in Orca as your Discord status, over local IPC (no OAuth, no HTTP, no
-standalone app).
+A local Discord Rich Presence plugin for Orca ADE. It reads the focused Orca
+workspace and observed agent status, then sends a presence to Discord Desktop
+through Discord's local IPC socket. It uses no OAuth, HTTP service, or runtime
+dependency.
 
-## Status
+## Install from Git
 
-v0.1 is implemented and verified end-to-end: loaded through Orca's plugin
-system (status "Running") and rendering in real Discord. What is not done yet
-is summarised in [Roadmap](#roadmap) and detailed in [ROADMAP.md](ROADMAP.md).
+1. In Orca, open **Settings → Plugins**, enable the plugin system, and choose
+   **Install plugin → Git URL**. Use
+   `https://github.com/aksalatdev/orca-discord-presence.git#v0.2.0`.
+   This URL becomes available when the `v0.2.0` tag is published. Review and
+   grant `workspace:read` and `events:subscribe`.
+2. Create your own application at the [Discord Developer Portal](https://discord.com/developers/applications)
+   and copy its **Application ID**. An App Icon is optional but replaces the
+   placeholder image in Discord. The Application ID is public, not a secret.
+3. Create `config.json` in `.orca-discord-presence` under your user home folder:
+   `%USERPROFILE%\.orca-discord-presence\config.json` on Windows, or
+   `~/.orca-discord-presence/config.json` on macOS/Linux. Its contents are:
+
+   ```json
+   { "clientId": "123456789012345678" }
+   ```
+
+   Replace the example with your own 17–20 digit Application ID. This file
+   lives outside Orca's versioned plugin install, so updates do not erase it.
+4. Run **Start Presence** from Orca's command palette. Discord Desktop must be
+   running locally. The plugin connects and reconnects automatically while the
+   Orca worker is active.
+
+No Node.js or pnpm installation is needed when installing from Git. Creating a
+Discord application and the local config file is still required.
+
+**Privacy:** After you run Start Presence, your focused workspace display name
+and branch may be visible to people who can see your Discord activity. Agent
+status is labelled as observed activity and is not attributed to that
+workspace. Do not start the plugin if those names should stay private.
+
+The worker activates lazily from a subscribed event or the Start Presence
+command. Orca does not provide an automatic app-startup hook for this plugin.
+The branch display can lag by up to 60 seconds.
 
 ## What it shows
 
-- using Orca ADE
-- focused workspace display name and branch, when available
-- observed agent activity (labelled as activity, not attributed to a workspace)
-- elapsed time since presence started (stable start timestamp)
+- Orca ADE use and elapsed time since Start Presence.
+- Focused workspace display name and branch, when available.
+- Observed agent activity, without claiming it belongs to that workspace.
 
-## How it works
+No workspace file contents, prompts, terminal text, or Discord credentials are
+read or sent. The plugin reads only its local config file and the declared Orca
+context/events. Presence data goes to the local Discord client, which controls
+its visibility under your Discord activity settings.
 
-Orca events/context → presence mapping → Discord RPC over a local named pipe
-(Windows) or Unix socket (macOS/Linux). The Discord IPC client is implemented
-in-repo (zero runtime dependencies) — only the HANDSHAKE/FRAME/CLOSE slice of
-the [Discord RPC protocol](https://docs.discord.com/developers/topics/rpc) needed
-for Rich Presence.
+## Develop from a local clone
 
-## Setup
+Use Node.js 22 or newer and pnpm from the repository root. Install the locked
+development dependencies, then build the bundled worker with `pnpm install`
+and `pnpm build`. Add the clone through **Settings → Plugins → Development →
+Add path**. A `config.json` in the clone root takes precedence over the user
+home config for local development; it is git-ignored.
 
-1. Create a Discord application at <https://discord.com/developers/applications>
-   and copy its Application ID.
-2. In the same app, set **General Information → App Icon** (1024×1024). Discord
-   uses the App Icon as the Rich Presence large image by default, so this is
-   what replaces the placeholder icon in the "Playing" card.
-3. Copy `config.json.example` to `config.json` and set `clientId` to that ID
-   (see [Config](#config)).
-4. Build: `pnpm install && pnpm build` (outputs `dist/main.mjs`).
-5. Load in Orca: **Settings → Plugins → Development → Add path** → this
-   directory → review and grant the requested capabilities
-   (`workspace:read`, `events:subscribe`).
-6. Run the **Start Presence** command (Orca command palette: `Ctrl+Shift+J`).
+For a local check, run `pnpm typecheck`, `pnpm test`, `pnpm build`, then
+`node scripts/smoke.mjs`. The smoke script uses a controlled Discord IPC peer;
+it is not a live Discord test. The generated source map is kept locally, while
+`dist/main.mjs` must be committed for Orca's Git installer, which does not build
+plugins during installation.
 
-> The worker activates lazily on a subscribed event or the command. There is no
-> true automatic startup; `Start Presence` is the entry point.
+## Verification and current limits
 
-## Config
+- TypeScript typecheck, 33 Vitest tests, bundle build, and built-artifact IPC
+  smoke pass on Windows with Node 22.
+- The v0.2 bundle completed a `READY` handshake with local Discord Desktop on
+  Windows using the developer's existing config and then cleared its activity.
+- The earlier v0.1 bundle loaded through Orca's development UI and rendered in
+  real Discord on Windows. The v0.2 Git install still needs a fresh-install
+  check in Orca before a public release.
+- Unix socket support exists, but real Discord on macOS and Linux has not yet
+  been verified. Do not claim either platform as tested until it is.
+- The plugin uses only public Orca plugin API capabilities. The API remains
+  experimental, so future Orca versions may need compatibility updates.
 
-`config.json` at the plugin root:
-
-```json
-{ "clientId": "123456789012345678" }
-```
-
-`config.json` is git-ignored. Missing or invalid `clientId` makes
-`Start Presence` return an error rather than connect.
-
-## Development
-
-```
-pnpm install      # dev deps only (no runtime deps)
-pnpm typecheck    # tsc --noEmit
-pnpm test         # vitest run
-pnpm build        # esbuild → dist/main.mjs
-node scripts/smoke.mjs   # real-Node IPC smoke against the built entry
-```
-
-Structure:
-
-- `src/discord.ts` — minimal Discord IPC client (frame codec, discovery,
-  handshake, bounded backoff, dedup/coalesce, idempotent shutdown)
-- `src/presence.ts` — nullable context + observed status → bounded text
-- `src/main.ts` — Orca worker entry (activate/deactivate, events, command,
-  60s refresh)
-
-## Verification
-
-- 26 unit/integration tests pass (`pnpm test`).
-- `pnpm build` and `pnpm typecheck` are clean.
-- `node scripts/smoke.mjs` proves a real HANDSHAKE + SET_ACTIVITY reach a
-  controlled named-pipe peer through the compiled bundle.
-- Real Discord: the client handshakes with the live `discord-ipc-0` pipe,
-  Discord replies `READY`, and `SET_ACTIVITY` is accepted
-  (`application_id: 1553769338350342204`, `name: "Orca Presence"`).
-- Orca: loaded through Settings → Plugins → Development; the plugin shows
-  status "Running" and its presence renders in Discord.
-
-## Roadmap
-
-v0.1 works end-to-end. The gaps below are grounded in the Orca plugin API and
-Discord behavior; full detail and rationale are in [ROADMAP.md](ROADMAP.md).
-
-**Next**
-
-- Commit the built `dist/main.mjs` so others can install over git — Orca's
-  installer never runs a build.
-- In-Orca client ID configuration (today it is a hand-edited `config.json`).
-- Upload the App Icon in the Discord Developer Portal (removes the placeholder).
-
-**Later**
-
-- Shared public client ID so users need no Discord setup of their own
-  (Discord limits unapproved apps to ~50 testers until approved).
-- Verify macOS/Linux (Unix socket discovery is implemented, Windows-only tested).
-- Rich Presence art assets and buttons; marketplace publishing.
-
-**Blocked**
-
-- Automatic presence start — Orca has no app-startup hook, so `Start Presence`
-  remains the entry point.
+See [SPEC.md](SPEC.md) for the accepted behavior and [ROADMAP.md](ROADMAP.md)
+for remaining work. This project is licensed under [MIT](LICENSE).

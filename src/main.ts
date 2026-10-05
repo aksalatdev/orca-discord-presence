@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { DiscordPresence, type DiscordActivity } from './discord'
 import { buildPresence, type WorkspaceContext, type AgentStatus } from './presence'
 
@@ -18,7 +19,7 @@ export type Orca = {
 export type PresenceClient = {
   start(): void
   setActivity(activity: DiscordActivity | null): void
-  destroy(): void
+  destroy(): void | Promise<void>
   get isConnected(): boolean
 }
 
@@ -27,7 +28,7 @@ export type PluginConfig = { clientId: string | null }
 export type ActivateDeps = {
   /** Test seam: construct the Discord client. Defaults to DiscordPresence. */
   createClient?: (clientId: string) => PresenceClient
-  /** Test seam: config source. Defaults to reading <root>/config.json. */
+  /** Test seam: config source. Defaults to local then user config.json. */
   loadConfig?: () => PluginConfig
   refreshIntervalMs?: number
 }
@@ -61,11 +62,14 @@ class Runtime {
   private stopped = false
   private context: WorkspaceContext | null = null
   private status: AgentStatus | null = null
-  private readonly startedAt = Date.now()
+  private startedAt: number | null = null
 
   constructor(orca: Orca, deps: ActivateDeps) {
     this.orca = orca
-    this.createClient = deps.createClient ?? ((clientId) => new DiscordPresence({ clientId }))
+    this.createClient = deps.createClient ?? ((clientId) => new DiscordPresence({
+      clientId,
+      onDiagnostic: (message) => this.log(message)
+    }))
     this.loadConfig = deps.loadConfig ?? defaultLoadConfig
     this.refreshIntervalMs = deps.refreshIntervalMs ?? REFRESH_INTERVAL_MS
   }
@@ -89,9 +93,10 @@ class Runtime {
     if (this.client != null) return { ok: true, started: false }
     const { clientId } = this.loadConfig()
     if (clientId == null) {
-      this.log('missing clientId: copy config.json.example to config.json and set a Discord application ID')
+      this.log('missing clientId: set a Discord application ID in ~/.orca-discord-presence/config.json')
       return { ok: false, error: 'missing clientId' }
     }
+    this.startedAt = Date.now()
     this.client = this.createClient(clientId)
     this.client.start()
     await this.refresh()
@@ -109,7 +114,14 @@ class Runtime {
     if (this.refreshing) return
     this.refreshing = true
     try {
-      this.context = await this.readContext()
+      try {
+        this.context = await this.readContext()
+      } catch {
+        // A transient host failure must not reject detached event/timer work.
+        // Clear the previous workspace instead of leaving stale details visible.
+        this.context = null
+        this.log('workspace context unavailable; showing generic presence')
+      }
       this.publish()
     } finally {
       this.refreshing = false
@@ -131,7 +143,7 @@ class Runtime {
   }
 
   private publish(): void {
-    if (this.client == null) return
+    if (this.client == null || this.stopped || this.startedAt == null) return
     this.client.setActivity(buildPresence(this.context, this.status, this.startedAt).activity)
   }
 
@@ -143,7 +155,7 @@ class Runtime {
     }
     const client = this.client
     this.client = null
-    client?.destroy()
+    await client?.destroy()
   }
 }
 
@@ -151,19 +163,30 @@ function validClientId(value: unknown): string | null {
   return typeof value === 'string' && CLIENT_ID_RE.test(value) ? value : null
 }
 
-/** Read <pluginRoot>/config.json; a missing/invalid file yields no clientId. */
+/** The user config stays outside Orca's immutable, versioned plugin install. */
 function defaultLoadConfig(): PluginConfig {
-  try {
-    const entryDir = dirname(fileURLToPath(import.meta.url))
-    const root = join(entryDir, '..')
-    const raw = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8')) as {
-      clientId?: unknown
-    }
-    return { clientId: validClientId(raw.clientId) }
-  } catch {
-    return { clientId: null }
-  }
+  const entryDir = dirname(fileURLToPath(import.meta.url))
+  const root = join(entryDir, '..')
+  return loadConfigFromPaths([
+    join(root, 'config.json'),
+    join(homedir(), '.orca-discord-presence', 'config.json')
+  ])
 }
 
-export const _internal = { START_COMMAND_ID, REFRESH_INTERVAL_MS, validClientId }
+function loadConfigFromPaths(paths: string[]): PluginConfig {
+  for (const path of paths) {
+    try {
+      const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
+      const clientId = validClientId(
+        typeof raw === 'object' && raw !== null ? (raw as { clientId?: unknown }).clientId : null
+      )
+      if (clientId != null) return { clientId }
+    } catch {
+      // Missing or malformed candidate; try the next supported location.
+    }
+  }
+  return { clientId: null }
+}
+
+export const _internal = { START_COMMAND_ID, REFRESH_INTERVAL_MS, validClientId, loadConfigFromPaths }
 export { DiscordPresence } from './discord'

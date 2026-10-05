@@ -26,7 +26,9 @@ export type DiscordActivity = {
 
 export type DiscordPresenceOptions = {
   clientId: string
-  /** Per-pipe TCP connect deadline. */
+  /** Report transport/protocol failures without exposing activity text. */
+  onDiagnostic?: (message: string) => void
+  /** Per-pipe connection deadline. */
   connectTimeoutMs?: number
   /** Deadline for the READY reply after HANDSHAKE. */
   handshakeTimeoutMs?: number
@@ -37,9 +39,13 @@ export type DiscordPresenceOptions = {
   activityFlushMs?: number
   /** Test seam: resolve a pipe index to a filesystem path. */
   pipePath?: (index: number) => string
+  /** Test seam: create a socket for one candidate path. */
+  connectSocket?: (path: string) => Socket
 }
 
 const PIPE_COUNT = 10
+const MAX_FRAME_BYTES = 1_048_576
+const SHUTDOWN_TIMEOUT_MS = 250
 
 /** Resolve a pipe index to the platform-specific Discord IPC path. */
 function defaultPipePath(index: number): string {
@@ -57,14 +63,17 @@ function defaultPipePath(index: number): string {
 
 export class DiscordPresence {
   private readonly clientId: string
+  private readonly onDiagnostic?: (message: string) => void
   private readonly connectTimeoutMs: number
   private readonly handshakeTimeoutMs: number
   private readonly baseBackoffMs: number
   private readonly maxBackoffMs: number
   private readonly activityFlushMs: number
   private readonly pipePath: (index: number) => string
+  private readonly connectSocket: (path: string) => Socket
 
   private socket: Socket | null = null
+  private connectingSocket: Socket | null = null
   private readBuffer = Buffer.alloc(0)
   private connected = false
   private connecting = false
@@ -79,15 +88,18 @@ export class DiscordPresence {
   private pendingActivity: DiscordActivity | null = null
   private lastSent: DiscordActivity | null = null
   private nonce = 0
+  private shutdownPromise: Promise<void> | null = null
 
   constructor(options: DiscordPresenceOptions) {
     this.clientId = options.clientId
+    this.onDiagnostic = options.onDiagnostic
     this.connectTimeoutMs = options.connectTimeoutMs ?? 2_000
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? 5_000
     this.baseBackoffMs = options.baseBackoffMs ?? 1_000
     this.maxBackoffMs = options.maxBackoffMs ?? 30_000
     this.activityFlushMs = options.activityFlushMs ?? 50
     this.pipePath = options.pipePath ?? defaultPipePath
+    this.connectSocket = options.connectSocket ?? ((path) => createConnection({ path }))
     this.backoffMs = this.baseBackoffMs
   }
 
@@ -116,28 +128,36 @@ export class DiscordPresence {
    * Cancel all timers, best-effort clear presence, and close the socket.
    * Idempotent.
    */
-  destroy(): void {
-    if (this.destroyed) return
+  destroy(): Promise<void> {
+    if (this.shutdownPromise != null) return this.shutdownPromise
+    if (this.destroyed) return Promise.resolve()
     this.destroyed = true
     this.clearTimers()
+    this.connectingSocket?.destroy()
+    this.connectingSocket = null
     const socket = this.socket
     this.socket = null
+    this.readBuffer = Buffer.alloc(0)
     this.connected = false
-    if (socket) {
+    this.resolveHandshake(false)
+    if (socket == null || socket.destroyed) return Promise.resolve()
+
+    // Flush a clear activity and CLOSE before ending the pipe. A dead peer
+    // cannot hold Orca's two-second shutdown grace indefinitely.
+    this.shutdownPromise = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => socket.destroy(), SHUTDOWN_TIMEOUT_MS)
+      socket.once('close', () => {
+        clearTimeout(timer)
+        resolve()
+      })
       try {
-        // Best-effort clear (empty activity) then CLOSE, before tearing down.
-        // Writes to a named pipe are queued synchronously, so destroy() after
-        // write() still delivers the bytes.
         socket.write(this.frame(OP.FRAME, this.activityPayload({})))
-        socket.write(this.frame(OP.CLOSE, '{}'))
+        socket.end(this.frame(OP.CLOSE, '{}'))
       } catch {
-        // Ignore: shutdown must not throw.
+        socket.destroy()
       }
-      socket.destroy()
-    }
-    const resolve = this.handshakeResolve
-    this.handshakeResolve = null
-    resolve?.(false)
+    })
+    return this.shutdownPromise
   }
 
   // ── connection ──────────────────────────────────────────────────────────
@@ -161,9 +181,20 @@ export class DiscordPresence {
       if (this.destroyed) return null
       const socket = await this.connectPipe(i)
       if (socket == null) continue
-      this.attach(socket)
+      if (this.destroyed) {
+        socket.destroy()
+        return null
+      }
       this.socket = socket
-      socket.write(this.frame(OP.HANDSHAKE, JSON.stringify({ v: 1, client_id: this.clientId })))
+      this.readBuffer = Buffer.alloc(0)
+      this.attach(socket)
+      try {
+        socket.write(this.frame(OP.HANDSHAKE, JSON.stringify({ v: 1, client_id: this.clientId })))
+      } catch {
+        this.socket = null
+        socket.destroy()
+        continue
+      }
       if (await this.waitReady()) {
         return socket
       }
@@ -175,17 +206,32 @@ export class DiscordPresence {
 
   private connectPipe(index: number): Promise<Socket | null> {
     const { promise, resolve } = Promise.withResolvers<Socket | null>()
-    const socket = createConnection({ path: this.pipePath(index) })
-    const onError = (): void => {
+    const socket = this.connectSocket(this.pipePath(index))
+    this.connectingSocket = socket
+    let settled = false
+    const settle = (result: Socket | null): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
-      resolve(null)
+      if (this.connectingSocket === socket) this.connectingSocket = null
+      resolve(result)
     }
-    const timer = setTimeout(onError, this.connectTimeoutMs)
-    socket.once('error', onError)
+    const timer = setTimeout(() => {
+      settle(null)
+      socket.destroy()
+    }, this.connectTimeoutMs)
+    socket.on('error', () => {
+      settle(null)
+      socket.destroy()
+    })
+    socket.once('close', () => settle(null))
     socket.once('connect', () => {
-      clearTimeout(timer)
-      socket.removeListener('error', onError)
-      resolve(socket)
+      if (this.destroyed || settled) {
+        settle(null)
+        socket.destroy()
+      } else {
+        settle(socket)
+      }
     })
     return promise
   }
@@ -193,7 +239,7 @@ export class DiscordPresence {
   // ── socket wiring ───────────────────────────────────────────────────────
 
   private attach(socket: Socket): void {
-    socket.on('data', (chunk) => this.onData(chunk))
+    socket.on('data', (chunk) => this.onData(socket, chunk))
     // Swallow errors: a lost peer surfaces as 'close', never as an uncaught throw.
     socket.on('error', () => {})
     socket.once('close', () => this.onClose(socket))
@@ -202,6 +248,7 @@ export class DiscordPresence {
   private onClose(socket: Socket): void {
     if (this.socket !== socket) return
     this.socket = null
+    this.readBuffer = Buffer.alloc(0)
     this.connected = false
     // A reconnect must republish: drop the "already sent" marker.
     this.lastSent = null
@@ -209,11 +256,22 @@ export class DiscordPresence {
     if (!this.destroyed) this.scheduleReconnect()
   }
 
-  private onData(chunk: Buffer): void {
+  private onData(socket: Socket, chunk: Buffer): void {
+    if (this.socket !== socket || this.destroyed) return
+    if (this.readBuffer.length + chunk.length > MAX_FRAME_BYTES + 8) {
+      this.onDiagnostic?.('Discord RPC frame exceeded the size limit; reconnecting')
+      socket.destroy()
+      return
+    }
     this.readBuffer = Buffer.concat([this.readBuffer, chunk])
     while (this.readBuffer.length >= 8) {
       const opcode = this.readBuffer.readUInt32LE(0)
       const length = this.readBuffer.readUInt32LE(4)
+      if (length > MAX_FRAME_BYTES) {
+        this.onDiagnostic?.('Discord RPC frame exceeded the size limit; reconnecting')
+        socket.destroy()
+        return
+      }
       if (this.readBuffer.length < 8 + length) return
       const payload = this.readBuffer.subarray(8, 8 + length).toString('utf8')
       this.readBuffer = this.readBuffer.subarray(8 + length)
@@ -223,19 +281,27 @@ export class DiscordPresence {
 
   private onFrame(opcode: number, json: string): void {
     if (opcode !== OP.FRAME) return
-    let message: { evt?: string }
+    let parsed: unknown
     try {
-      message = JSON.parse(json) as { evt?: string }
+      parsed = JSON.parse(json)
     } catch {
       return
     }
-    if (message.evt === 'READY') {
+    if (typeof parsed !== 'object' || parsed === null) return
+    const message = parsed as { evt?: unknown; data?: unknown }
+    if (message.evt === 'READY' && this.handshakeResolve != null) {
       this.connected = true
       this.backoffMs = this.baseBackoffMs
       this.resolveHandshake(true)
       this.flush()
+    } else if (message.evt === 'ERROR') {
+      const data = message.data
+      const code = typeof data === 'object' && data !== null
+        ? (data as { code?: unknown }).code
+        : undefined
+      const suffix = typeof code === 'number' && Number.isSafeInteger(code) ? ` (code ${code})` : ''
+      this.onDiagnostic?.(`Discord RPC rejected a request${suffix}`)
     }
-    // ERROR events are nonfatal and intentionally ignored.
   }
 
   private waitReady(): Promise<boolean> {

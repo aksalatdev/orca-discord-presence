@@ -17,3 +17,15 @@
 ## Tests, last run
 
 `pnpm typecheck` clean; `pnpm test` 26 passed; `pnpm build` clean; `node scripts/smoke.mjs` OK.
+
+## v0.2 Git distribution preparation
+
+- [x] Keep the built worker in the release tree, use a per-user config file,
+  add MIT licensing, and align the package and manifest at 0.2.0.
+- [x] Harden context-refresh failures and IPC frame, reconnect, and shutdown
+  handling; extend controlled-peer coverage.
+- [x] Document privacy and the manual Discord Application ID step.
+- [x] Check the v0.2 bundle against local Discord Desktop on Windows: `READY`
+  handshake succeeded and the temporary presence was cleared.
+- [ ] Verify the Git install in real Orca and Discord, then publish the
+  `v0.2.0` tag. Verify macOS and Linux before claiming those platforms.

@@ -4,6 +4,9 @@
 // client. Uses fakes for the host boundary (commands/events/host) and the
 // presence client (test seam).
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Orca, PresenceClient, PluginConfig } from './main'
 import type { WorkspaceContext } from './presence'
 import activate, { deactivate, _internal } from './main'
@@ -108,6 +111,21 @@ describe('Orca plugin entry', () => {
     expect(client.setActivity).toHaveBeenCalledTimes(1)
   })
 
+  it('starts elapsed time when Start Presence runs, not when the worker activates', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const client = makeFakeClient()
+    createClient.mockReturnValue(client)
+    const { commands } = wire()
+    vi.setSystemTime(new Date('2026-01-01T00:03:00Z'))
+
+    await commands.get(_internal.START_COMMAND_ID)!()
+
+    expect(client.setActivity.mock.calls[0]![0].timestamps.start).toBe(
+      Date.parse('2026-01-01T00:03:00Z') / 1000
+    )
+  })
+
   it('is idempotent on repeated Start Presence', async () => {
     const client = makeFakeClient()
     createClient.mockReturnValue(client)
@@ -152,6 +170,22 @@ describe('Orca plugin entry', () => {
     expect(client.setActivity.mock.calls.length).toBe(before + 1)
   })
 
+  it('keeps presence running with generic details when the host context fails', async () => {
+    const client = makeFakeClient()
+    createClient.mockReturnValue(client)
+    const { orca, commands } = makeFakeOrca()
+    orca.host.call = vi.fn().mockRejectedValue(new Error('host unavailable'))
+    activate(orca, { createClient, loadConfig, refreshIntervalMs })
+
+    const result = await commands.get(_internal.START_COMMAND_ID)!()
+
+    expect(result).toEqual({ ok: true, started: true })
+    expect(client.setActivity.mock.calls[0]![0].details).toBe('Using Orca ADE')
+    expect(orca.log).toHaveBeenCalledWith(
+      '[orca-discord-presence] workspace context unavailable; showing generic presence'
+    )
+  })
+
   it('cancels timers and destroys the client on deactivate', async () => {
     vi.useFakeTimers()
     const client = makeFakeClient()
@@ -171,5 +205,25 @@ describe('Orca plugin entry', () => {
     expect(_internal.validClientId('not-a-snowflake')).toBeNull()
     expect(_internal.validClientId('123')).toBeNull()
     expect(_internal.validClientId(undefined)).toBeNull()
+  })
+
+  it('loads per-user config when local config is absent or invalid', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orca-presence-config-'))
+    try {
+      const local = join(dir, 'local.json')
+      const user = join(dir, 'user.json')
+      writeFileSync(user, '{"clientId":"123456789012345678"}')
+      expect(_internal.loadConfigFromPaths([local, user])).toEqual({
+        clientId: '123456789012345678'
+      })
+
+      writeFileSync(local, '{"clientId":"invalid"}')
+      expect(_internal.loadConfigFromPaths([local, user]).clientId).toBe('123456789012345678')
+
+      writeFileSync(local, '{"clientId":"1553769338350342204"}')
+      expect(_internal.loadConfigFromPaths([local, user]).clientId).toBe('1553769338350342204')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
